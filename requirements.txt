@@ -1,0 +1,14 @@
+flask
+python-dotenv
+langchain
+langchain-openai
+openai
+newsapi-python
+gnews
+yfinance
+yahooquery
+nsetools
+investpy
+textblob
+pandas
+requests
