@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nifty 50 AI Analyst</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root { --primary: #2563eb; --bg: #f8fafc; --user-msg: #3b82f6; --bot-msg: #ffffff; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); margin: 0; display: flex; justify-content: center; height: 100vh; }
+        
+        .container { width: 100%; max-width: 900px; background: #fff; display: flex; flex-direction: column; box-shadow: 0 0 20px rgba(0,0,0,0.05); }
+        
+        .header { padding: 20px; background: #fff; border-bottom: 1px solid #eee; text-align: center; }
+        .header h1 { margin: 0; font-size: 1.2rem; color: #333; }
+        .header span { font-size: 0.8rem; color: #22c55e; font-weight: bold; }
+
+        #chat-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; background: #f1f5f9; }
+        
+        .message { max-width: 80%; padding: 12px 18px; border-radius: 12px; line-height: 1.5; font-size: 0.95rem; position: relative; }
+        .user { align-self: flex-end; background: var(--user-msg); color: white; border-bottom-right-radius: 2px; }
+        .bot { align-self: flex-start; background: var(--bot-msg); color: #333; border-bottom-left-radius: 2px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        
+        /* Thinking Process Styles */
+        .thinking-container { align-self: flex-start; font-size: 0.85rem; color: #64748b; margin-left: 10px; margin-bottom: 5px; display: none; }
+        .thinking-step { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; opacity: 0; animation: fadeIn 0.3s forwards; }
+        .checkmark { color: #22c55e; font-weight: bold; }
+        
+        .input-area { padding: 20px; background: #fff; border-top: 1px solid #eee; display: flex; gap: 10px; }
+        input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 8px; outline: none; transition: 0.2s; }
+        input:focus { border-color: var(--primary); }
+        button { padding: 12px 24px; background: var(--primary); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
+        button:disabled { background: #cbd5e1; cursor: not-allowed; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Markdown content styling */
+        .bot ul { padding-left: 20px; margin: 5px 0; }
+        .bot strong { color: #1e293b; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>📈 NIFTY 50 AI Analyst</h1>
+        <span>● Online</span>
+    </div>
+
+    <div id="chat-box">
+        <div class="message bot">
+            Hello! I analyze NIFTY 50 stocks. Try asking: <br>
+            <em>"Analyze Reliance"</em> or <em>"Is TCS a good buy?"</em>
+        </div>
+    </div>
+
+    <div id="thinking-template" class="thinking-container"></div>
+
+    <div class="input-area">
+        <input type="text" id="user-input" placeholder="Type a stock name..." autocomplete="off">
+        <button id="send-btn" onclick="sendMessage()">Send</button>
+    </div>
+</div>
+
+<script>
+    const chatBox = document.getElementById('chat-box');
+    const input = document.getElementById('user-input');
+    const btn = document.getElementById('send-btn');
+
+    input.addEventListener('keypress', (e) => { if(e.key === 'Enter') sendMessage(); });
+
+    async function sendMessage() {
+        const text = input.value.trim();
+        if(!text) return;
+
+        // 1. Add User Message
+        addMessage(text, 'user');
+        input.value = '';
+        btn.disabled = true;
+        input.disabled = true;
+
+        // 2. Add "Thinking" Placeholder
+        const thinkingDiv = document.createElement('div');
+        thinkingDiv.className = 'thinking-container';
+        thinkingDiv.style.display = 'block';
+        thinkingDiv.innerHTML = '<div class="thinking-step"><span>🤔 Starting analysis...</span></div>';
+        chatBox.appendChild(thinkingDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+
+        try {
+            // 3. API Call
+            const res = await fetch('/chat', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ message: text })
+            });
+            
+            const data = await res.json();
+
+            // 4. Update Thinking Logs (Show the user what happened)
+            thinkingDiv.innerHTML = ''; // Clear "Starting..."
+            if (data.logs && data.logs.length > 0) {
+                data.logs.forEach((log, index) => {
+                    setTimeout(() => {
+                        const step = document.createElement('div');
+                        step.className = 'thinking-step';
+                        step.innerHTML = `<span class="checkmark">✓</span> <span>${log}</span>`;
+                        thinkingDiv.appendChild(step);
+                    }, index * 100); // Stagger effect
+                });
+            }
+
+            // 5. Add Final Response
+            setTimeout(() => {
+                const botDiv = document.createElement('div');
+                botDiv.className = 'message bot';
+                botDiv.innerHTML = marked.parse(data.response);
+                chatBox.appendChild(botDiv);
+                chatBox.scrollTop = chatBox.scrollHeight;
+            }, 500); // Small delay for effect
+
+        } catch (e) {
+            addMessage("Error connecting to server.", 'bot');
+            thinkingDiv.remove();
+        } finally {
+            btn.disabled = false;
+            input.disabled = false;
+            input.focus();
+        }
+    }
+
+    function addMessage(text, type) {
+        const div = document.createElement('div');
+        div.className = `message ${type}`;
+        div.textContent = text;
+        chatBox.appendChild(div);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+</script>
+
+</body>
+</html>
