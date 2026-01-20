@@ -1,9 +1,11 @@
 import os
 import sys
-import datetime
+import datetime,time
+import random
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify
 from textblob import TextBlob
+from langchain_core.pydantic_v1 import BaseModel, Field
 
 from newsapi import NewsApiClient
 from gnews import GNews
@@ -15,7 +17,37 @@ from langchain.tools import tool
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.memory import ConversationBufferMemory
 
+import requests
+from bs4 import BeautifulSoup
+from langchain.tools import tool
+from langchain_community.tools import DuckDuckGoSearchRun
 
+# --- Input Schemas ---
+# These help the LLM understand exactly what to provide
+class SearchInput(BaseModel):
+    query: str = Field(description="The search query string to find information.")
+
+class ReadBlogInput(BaseModel):
+    url: str = Field(description="The valid URL of the article or blog post to read.")
+
+# --- Helper for Anti-Bot ---
+def get_random_header():
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36"
+    ]
+    return {
+        "User-Agent": random.choice(user_agents),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Referer": "https://www.google.com/"
+    }
+
+
+# ================= 0. SETUP =================
+# Load environment variables
 load_dotenv()
 if not os.getenv("OPENAI_API_KEY"):
     print("❌ Error: OPENAI_API_KEY not found in .env file.")
@@ -37,7 +69,7 @@ NIFTY_50_MAPPING = {
     "RELIANCE": "RELIANCE", "TCS": "TCS", "HDFC BANK": "HDFCBANK", "ICICI BANK": "ICICIBANK",
     "INFOSYS": "INFY", "SBI": "SBIN", "BHARTI AIRTEL": "BHARTIARTL", "ITC": "ITC",
     "LARSEN": "LT", "L&T": "LT", "HINDUSTAN UNILEVER": "HINDUNILVR", "AXIS BANK": "AXISBANK",
-    "KOTAK": "KOTAKBANK", "TATA MOTORS": "TATAMOTORS", "TITAN": "TITAN", "BAJAJ FINANCE": "BAJFINANCE",
+    "KOTAK": "KOTAKBANK", "TATA MOTORS PV": "TMPV", "TITAN": "TITAN", "BAJAJ FINANCE": "BAJFINANCE",
     "SUN PHARMA": "SUNPHARMA", "HCL TECH": "HCLTECH", "MARUTI": "MARUTI", "ASIAN PAINTS": "ASIANPAINT",
     "ADANI ENTERPRISES": "ADANIENT", "ADANI PORTS": "ADANIPORTS", "ULTRATECH": "ULTRACEMCO",
     "POWER GRID": "POWERGRID", "WIPRO": "WIPRO", "NTPC": "NTPC", "ONGC": "ONGC",
@@ -50,6 +82,7 @@ NIFTY_50_MAPPING = {
     "SHRIRAM FINANCE": "SHRIRAMFIN", "TRENT": "TRENT", "BEL": "BEL"
 }
 
+# ================= 2. SYMBOL CLEANING =================
 def clean_symbol(symbol: str) -> str:
     """Ensures we use the correct NIFTY 50 ticker."""
     q = symbol.upper().strip()
@@ -402,8 +435,81 @@ def suggest_trade(current_price: float, average_price: float, sentiment_label: s
     elif diff < -3 and sentiment_label == "Negative": rec = "SELL ⬇️"
     return {"recommendation": rec, "trend": f"{diff:.1f}%"}
 
+# ================= WEB SEARCH & SCRAPING TOOLS =================
+
+
+@tool("search_web", args_schema=SearchInput)
+def search_web(query: str):
+    """
+    Searches the internet for analysis, blogs, or news articles.
+    Use this when you need to find information about demergers, 
+    future plans, or qualitative analysis.
+    Returns a summary and URLs.
+    """
+    search = DuckDuckGoSearchRun()
+    max_retries = 3
+    
+    # DuckDuckGo often throws rate limit errors. We add a simple retry mechanism.
+    for attempt in range(max_retries):
+        try:
+            # invoke returns the string result directly
+            return search.invoke(query)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                return f"Search failed after {max_retries} attempts. Error: {e}"
+            time.sleep(1.5) # Wait briefly before retrying
+    return "Search failed."
+
+
+@tool("read_blog_content", args_schema=ReadBlogInput)
+def read_blog_content(url: str):
+    """
+    Reads the full text content of a specific URL.
+    Use this AFTER using 'search_web' to get the details of a specific article.
+    Smartly removes navigation bars, footers, and ads.
+    """
+    try:
+        # 1. Network Request with Anti-Bot headers
+        response = requests.get(url, headers=get_random_header(), timeout=15)
+        response.raise_for_status()
+        
+        # 2. Parse HTML
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        # 3. Clean "Noise" Tags (This is critical for quality data)
+        # We remove scripts, styles, navbars, footers, and headers
+        tags_to_remove = [
+            "script", "style", "nav", "footer", "header", "aside", 
+            "form", "iframe", "noscript", "svg"
+        ]
+        for tag in soup(tags_to_remove):
+            tag.decompose() # Completely remove the tag from the tree
+            
+        # 4. Extract Text Smartly
+        # get_text with separator handles paragraphs better than raw text
+        text = soup.get_text(separator="\n", strip=True)
+        
+        # 5. Clean up excessive newlines
+        import re
+        clean_text = re.sub(r'\n+', '\n', text)
+        
+        # 6. Length Check
+        if len(clean_text) < 200:
+             return f"Error: Content too short. The site ({url}) might be blocking bots or requires JavaScript."
+             
+        # 7. Truncate for LLM Context Window
+        return clean_text[:8000] + "..." if len(clean_text) > 8000 else clean_text
+
+    except requests.exceptions.Timeout:
+        return "Error: The request timed out. The server took too long to respond."
+    except requests.exceptions.ConnectionError:
+        return "Error: Could not connect to the server. Check the URL."
+    except Exception as e:
+        return f"Error reading article: {str(e)}"
+
 # ================= 4. AGENT SETUP =================
-tools = [get_stock_quote, get_historical_average, get_company_fundamentals, get_news_headlines, analyze_sentiment, suggest_trade]
+
+tools = [get_stock_quote, get_historical_average, get_company_fundamentals, get_news_headlines, analyze_sentiment, suggest_trade,read_blog_content,search_web]
 
 company_list_str = ", ".join(NIFTY_50_MAPPING.keys())
 system_message = f"""
@@ -415,7 +521,7 @@ Analyze **ONLY** these NIFTY 50 stocks:
 Refuse all others or give similar available stocks.
 
 ### TOOLS
-- **Analysis / Buy–Sell** → use ALL tools (price, fundamentals, history, sentiment, suggestion)
+- **Analysis / Buy–Sell** → use ALL tools 
 - **Simple data** (e.g., price) → use ONLY the required tool
 - **Sentiment-only** → analyze_sentiment only
 
@@ -423,6 +529,13 @@ Refuse all others or give similar available stocks.
 - Use Markdown tables
 - Cite tool sources
 - Label sections clearly
+- tell if company fundamentals are good or bad based on standard financial ratios.
+- Summarize news sentiment briefly
+- Provide clear Buy/Sell/Hold recommendation with reasoning
+- If using web search, summarize key points from articles
+- If no data found, say "N/A" or "No Data"
+- if multiple tools used, summarize findings coherently.
+
 
 ### RULES
 - Educational insights only
