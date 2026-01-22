@@ -6,6 +6,10 @@ from langchain.tools import tool
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from difflib import get_close_matches
+from newsapi import NewsApiClient
+from gnews import GNews
+from bs4 import BeautifulSoup
+import requests
 
 # Import helpers from utils
 from utils import clean_symbol, format_currency
@@ -41,71 +45,190 @@ def get_stock_quote(symbol: str) -> dict:
 
 @tool
 def get_historical_average(symbol: str) -> dict:
-    """Get 30-day historical average price."""
-    clean_sym = clean_symbol(symbol)
+    """
+    Get 30-day historical average using the 'yahooquery' library.
+    """
+    clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
+    # default to NSE
     yahoo_sym = f"{clean_sym}.NS"
+    
     try:
-        stock = yf.Ticker(yahoo_sym)
-        hist = stock.history(period="1mo")
-        if not hist.empty:
-            return {"average_price": round(hist['Close'].mean(), 2), "success": True}
-    except: pass
-    return {"average_price": 0, "error": "No history found", "success": False}
+        t = Ticker(yahoo_sym)
+        # yahooquery returns a dataframe with MultiIndex (symbol, date)
+        df = t.history(period='30d', interval='1d')
+        
+        if isinstance(df, dict) or df.empty:
+             return {"error": "No data found", "success": False}
+
+        avg_price = df['close'].mean()
+        
+        return {
+            "symbol": yahoo_sym,
+            "average_30d": round(avg_price, 2),
+            "success": True
+        }
+    except Exception as e:
+        return {"error": str(e), "success": False}
 
 @tool
 def get_company_fundamentals(symbol: str, data_point: str = "all") -> dict:
     """
-    Fetch factual Indian stock fundamentals (PE, Market Cap, ROE, etc.).
-    Returns verified INR data only.
+    Fetch comprehensive fundamentals (Valuation, Profitability, Health).
+    Uses Yahoo Finance (Primary) -> Screener.in (Fallback).
     """
-    clean_sym = clean_symbol(symbol)
-    yahoo_sym = f"{clean_sym}.NS"
-    
+    clean_sym = symbol.upper().replace(".NS", "").replace(".BO", "").strip()
     data = {}
-    try:
-        yf_stock = yf.Ticker(yahoo_sym)
-        info = yf_stock.info
-        
-        def safe(key): return info.get(key)
+    
+    # ---------------------------------------------------------
+    # STRATEGY 1: Yahoo Finance 
+    # ---------------------------------------------------------
+    suffixes = [".NS", ".BO"]
+    for suffix in suffixes:
+        try:
+            ticker = f"{clean_sym}{suffix}"
+            yf_stock = yf.Ticker(ticker)
+            info = yf_stock.info
+            
+            if info and info.get("currentPrice"):
+                def safe(key): return info.get(key)
+                
+                # Inline Helper for Percentages (Replaces fmt_pct)
+                def pct(key):
+                    val = info.get(key)
+                    return f"{round(val * 100, 2)}%" if val is not None else "N/A"
 
-        if info.get("currency") == "INR":
-            data = {
-                "name": info.get("longName", clean_sym),
-                "market_cap": format_currency(safe("marketCap")),
-                "current_price": f"₹{safe('currentPrice')}",
-                "pe_ratio": round(safe("trailingPE"), 2) if safe("trailingPE") else "N/A",
-                "roe": f"{round(safe('returnOnEquity')*100, 2)}%" if safe("returnOnEquity") else "N/A",
-                "dividend_yield": f"{round(safe('dividendYield')*100, 2)}%" if safe("dividendYield") else "N/A",
-                "book_value": format_currency(safe("bookValue")),
-                "source": "yfinance",
-                "success": True
-            }
-    except Exception as e:
-        return {"error": str(e), "success": False}
+                data = {
+                    "name": info.get("longName", clean_sym),
+                    
+                    # Currency Fields
+                    "current_price": format_currency(safe("currentPrice")),
+                    "market_cap": format_currency(safe("marketCap")),
+                    "book_value": format_currency(safe("bookValue")),
+                    "total_debt": format_currency(safe("totalDebt")),
+                    "free_cash_flow": format_currency(safe("freeCashflow")),
+                    
+                    # Valuation
+                    "pe_ratio": round(safe("trailingPE"), 2) if safe("trailingPE") else "N/A",
+                    "peg_ratio": safe("pegRatio") or "N/A",
+                    "dividend_yield": pct("dividendYield"),
+                    
+                    # Profitability
+                    "roe": pct("returnOnEquity"),
+                    "roa": pct("returnOnAssets"),
+                    "net_profit_margin": pct("profitMargins"),
+                    "operating_margin": pct("operatingMargins"),
+                    
+                    # Financial Health
+                    "debt_to_equity": round(safe("debtToEquity")/100, 2) if safe("debtToEquity") else "N/A",
+                    "current_ratio": safe("currentRatio") or "N/A",
+                    
+                    # Growth
+                    "revenue_growth": pct("revenueGrowth"),
+                    "earnings_growth": pct("earningsGrowth"),
+                    
+                    "source": f"yfinance ({suffix})",
+                    "success": True
+                }
+                break 
+        except: continue
 
-    if not data: return {"error": "No data found", "success": False}
+    # ---------------------------------------------------------
+    # STRATEGY 2: Screener.in
+    # ---------------------------------------------------------
+    if not data:
+        try:
+            url = f"https://www.screener.in/company/{clean_sym}/"
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                def get_sc(label):
+                    tags = soup.find_all('span', class_='name')
+                    for tag in tags:
+                        if label.lower() in tag.text.strip().lower():
+                            val = tag.find_next('span', class_='number')
+                            if val: return val.text.strip().replace(",", "")
+                    return None
 
-    # Return specific metric if requested
+                # Safe float conversion
+                try: mcap = float(get_sc('Market Cap')) 
+                except: mcap = None
+                try: price = float(get_sc('Current Price'))
+                except: price = None
+                try: bv = float(get_sc('Book Value'))
+                except: bv = None
+
+                data = {
+                    "name": clean_sym,
+                    "source": "Screener.in (Fallback)",
+                    "current_price": f"₹{price}" if price else "N/A",
+                    # Note: Screener MCAP is usually in Cr already, we just append 'Cr'
+                    "market_cap": f"₹{mcap} Cr" if mcap else "N/A",
+                    
+                    "pe_ratio": get_sc('Stock P/E') or "N/A",
+                    "roce": f"{get_sc('ROCE')}%",
+                    "roe": f"{get_sc('ROE')}%",
+                    "dividend_yield": f"{get_sc('Dividend Yield')}%",
+                    "book_value": f"₹{bv}" if bv else "N/A",
+                    "success": True
+                }
+        except Exception as e:
+            print(f"Screener Error: {e}")
+
+    if not data: 
+        return {"error": f"No data found for {clean_sym}", "success": False}
+
     if data_point.lower() == "all": return data
 
-    match = get_close_matches(data_point, data.keys(), n=1, cutoff=0.6)
+    match = get_close_matches(data_point, data.keys(), n=1, cutoff=0.5)
     if match: return {match[0]: data[match[0]], "success": True}
     
-    return data
+    return {"error": f"Metric '{data_point}' not found.", "success": False}
+
 
 @tool
 def get_news_headlines(company_name: str) -> dict:
-    """Fetch top 5 financial news headlines using GNews."""
-    from gnews import GNews
-    try:
-        google_news = GNews(language='en', country='IN', period='3d', max_results=5)
-        # Search query like "RELIANCE stock"
-        news = google_news.get_news(f"{company_name} stock")
-        headlines = [n['title'] for n in news]
-        if headlines: return {"headlines": headlines[:5], "success": True}
-    except: pass
-    return {"headlines": [], "message": "No news found.", "success": True}
+    """
+    Fetch top financial news, prioritizing Moneycontrol , Economic Times or live mint.
+    """
+    headlines = []
+    seen = set()
 
+    def add(new_titles):
+        for h in new_titles:
+            h = h.strip()
+            if h not in seen:
+                headlines.append(h)
+                seen.add(h)
+
+    # 1. Trusted Sources (Priority)
+    try:
+        gnews = GNews(language='en', country='IN', period='7d', max_results=5)
+        # Force results from trusted domains
+        query = f"{company_name} (site:moneycontrol.com OR site:economictimes.indiatimes.com)"
+        add([n['title'] for n in gnews.get_news(query)])
+    except: pass
+
+    # 2. Broader GNews Search (Secondary)
+    if len(headlines) < 5:
+        try:
+            gnews_broad = GNews(language='en', country='IN', period='3d', max_results=5)
+            add([n['title'] for n in gnews_broad.get_news(f"{company_name} stock")])
+        except: pass
+
+    # 3. NewsAPI (Final Fallback)
+    api_key = os.getenv("NEWS_API_KEY")
+    if api_key and len(headlines) < 10:
+        try:
+            n_client = NewsApiClient(api_key=api_key)
+            resp = n_client.get_everything(q=f"{company_name} stock", language='en', sort_by='relevancy', page_size=5)
+            if resp.get('status') == 'ok':
+                add([a['title'] for a in resp['articles']])
+        except: pass
+
+    return {"headlines": headlines[:10], "success": bool(headlines)}
 @tool
 def analyze_sentiment(headlines: list) -> dict:
     """
@@ -139,8 +262,8 @@ def suggest_trade(current_price: float, average_price: float, sentiment_label: s
 @tool
 def search_web(query: str):
     """
-    Searches the web for reasons, future plans, or qualitative analysis. 
-    Returns text snippets and links.
+    Searches the web for reasons,demerger,aquistions, future plans, or qualitative analysis etc. 
+    Returns text snippets.
     """
     wrapper = DuckDuckGoSearchAPIWrapper(max_results=5)
     search = DuckDuckGoSearchResults(api_wrapper=wrapper)
