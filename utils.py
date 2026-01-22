@@ -27,7 +27,7 @@ def clean_symbol(symbol: str) -> str:
     if q in NIFTY_50_MAPPING:
         return NIFTY_50_MAPPING[q]
         
-    # 2. Partial Match (e.g. "Tata Motors" -> "TATAMOTORS")
+    # 2. Partial Match 
     for name, sym in NIFTY_50_MAPPING.items():
         if name in q: 
             return sym

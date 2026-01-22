@@ -19,15 +19,15 @@ async def lifespan(app: FastAPI):
     """Load resources on startup."""
     load_dotenv()
     if not os.getenv("OPENAI_API_KEY"):
-        print("❌ CRITICAL ERROR: OPENAI_API_KEY not found.")
+        print(" CRITICAL ERROR: OPENAI_API_KEY not found.")
         sys.exit(1)
     
     # Initialize Agent
     app.state.agent = initialize_agent()
-    print("✅ NIFTY 50 AI Analyst Agent Initialized.")
+    print(" NIFTY 50 AI Analyst Agent Initialized.")
     
     yield
-    print("🛑 Shutting down...")
+ 
 
 # --- 2. Setup FastAPI ---
 app = FastAPI(title="NIFTY 50 AI Analyst", lifespan=lifespan)
@@ -69,7 +69,7 @@ async def chat_endpoint(payload: ChatRequest):
     try:
         agent = app.state.agent
 
-        # Run the agent (No callbacks needed now)
+        # Run the agent
         result = await agent.ainvoke({"input": user_input})
         
         # Extract output safely
