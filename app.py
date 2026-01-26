@@ -9,8 +9,6 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Optional
-
-# Import your modular agent
 from agent import initialize_agent
 
 # --- 1. Lifespan Manager ---
