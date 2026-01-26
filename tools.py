@@ -8,7 +8,6 @@ from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
 from difflib import get_close_matches
 from newsapi import NewsApiClient
 from gnews import GNews
-from bs4 import BeautifulSoup
 import requests
 
 # Import helpers from utils
@@ -33,7 +32,7 @@ def get_stock_quote(symbol: str) -> dict:
         if price: return {"price": round(price, 2), "source": "YahooQuery", "success": True}
     except: pass
 
-    # Source 2: yfinance (Fallback with 5-day history for weekends)
+    # Source 2: yfinance
     try:
         stock = yf.Ticker(yahoo_sym)
         data = stock.history(period="5d")
@@ -54,7 +53,7 @@ def get_historical_average(symbol: str) -> dict:
     
     try:
         t = Ticker(yahoo_sym)
-        # yahooquery returns a dataframe with MultiIndex (symbol, date)
+     
         df = t.history(period='30d', interval='1d')
         
         if isinstance(df, dict) or df.empty:
@@ -92,7 +91,7 @@ def get_company_fundamentals(symbol: str, data_point: str = "all") -> dict:
             if info and info.get("currentPrice"):
                 def safe(key): return info.get(key)
                 
-                # Inline Helper for Percentages (Replaces fmt_pct)
+                # Inline Helper for Percentages
                 def pct(key):
                     val = info.get(key)
                     return f"{round(val * 100, 2)}%" if val is not None else "N/A"
@@ -191,7 +190,7 @@ def get_company_fundamentals(symbol: str, data_point: str = "all") -> dict:
 @tool
 def get_news_headlines(company_name: str) -> dict:
     """
-    Fetch top financial news, prioritizing Moneycontrol , Economic Times or live mint.
+    Fetch top financial news, prioritizing Moneycontrol , Economic Times .
     """
     headlines = []
     seen = set()
@@ -210,15 +209,8 @@ def get_news_headlines(company_name: str) -> dict:
         query = f"{company_name} (site:moneycontrol.com OR site:economictimes.indiatimes.com)"
         add([n['title'] for n in gnews.get_news(query)])
     except: pass
-
-    # 2. Broader GNews Search (Secondary)
-    if len(headlines) < 5:
-        try:
-            gnews_broad = GNews(language='en', country='IN', period='3d', max_results=5)
-            add([n['title'] for n in gnews_broad.get_news(f"{company_name} stock")])
-        except: pass
-
-    # 3. NewsAPI (Final Fallback)
+    
+    # 2. NewsAPI 
     api_key = os.getenv("NEWS_API_KEY")
     if api_key and len(headlines) < 10:
         try:
@@ -233,7 +225,6 @@ def get_news_headlines(company_name: str) -> dict:
 def analyze_sentiment(headlines: list) -> dict:
     """
     Analyze sentiment of headlines (Positive/Negative/Neutral).
-    Uses a low threshold (0.05) to catch financial nuances.
     """
     if not headlines: return {"sentiment_label": "Neutral", "score": 0}
     try:
