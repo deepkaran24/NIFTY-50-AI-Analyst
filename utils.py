@@ -33,7 +33,7 @@ def clean_symbol(symbol: str) -> str:
             return sym
             
     # 3. Fallback
-    return q.replace(".NS", "").replace(".BO", "").strip()
+    return q.replace(".NS", "").strip()
 
 def format_currency(value):
     """Formats large numbers into Crores or readable strings."""

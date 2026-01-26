@@ -4,7 +4,7 @@ from langchain.agents import create_openai_functions_agent, AgentExecutor
 from langchain.prompts.chat import ChatPromptTemplate
 from langchain.memory import ConversationBufferMemory
 
-# Import tools (read_blog_content is removed)
+# Import tools 
 from tools import (
     get_stock_quote, get_historical_average, get_company_fundamentals, 
     get_news_headlines, analyze_sentiment, suggest_trade, search_web
@@ -39,7 +39,7 @@ def initialize_agent():
     - Use Markdown tables for data.
     - Cite sources (e.g., "Source: YahooFinance", "Source: Web Search Snippets").
     - Be concise. Do not make up facts.
-    - 
+    - also provide full forms of all abbreviations used.
     - Give answer mostly in bullet points and clean format so that it doesn't look cluttered.
     - also provide a summary analysis at the end in a separate "Analysis" section along with trade recommendation.
     - if no data is found from tools, respond with "Data Not Available" message and tell to hold the stock.
