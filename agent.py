@@ -4,7 +4,7 @@ from langchain.agents import create_openai_functions_agent, AgentExecutor
 from langchain.prompts.chat import ChatPromptTemplate
 from langchain.memory import ConversationBufferMemory
 
-# Import tools (read_blog_content is removed)
+# Import tools
 from tools import (
     get_stock_quote, get_historical_average, get_company_fundamentals, 
     get_news_headlines, analyze_sentiment, suggest_trade, search_web
