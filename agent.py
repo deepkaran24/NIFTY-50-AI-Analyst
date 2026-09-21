@@ -1,9 +1,9 @@
 import os
-
 from langchain_openai import ChatOpenAI
-from langchain_classic.agents import create_tool_calling_agent, AgentExecutor
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_classic.memory import ConversationBufferMemory
+from langchain.agents import create_openai_functions_agent, AgentExecutor
+from langchain.prompts.chat import ChatPromptTemplate
+from langchain.memory import ConversationBufferMemory
+
 # Import tools 
 from tools import (
     get_stock_quote, get_historical_average, get_company_fundamentals, 
@@ -66,7 +66,7 @@ def initialize_agent():
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
     # 5. Create Agent
- agent = create_tool_calling_agent(llm, tools, prompt)
+    agent = create_openai_functions_agent(llm, tools, prompt)
     
     return AgentExecutor(
         agent=agent, 
