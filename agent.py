@@ -66,7 +66,7 @@ def initialize_agent():
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
     # 5. Create Agent
-   agent = create_tool_calling_agent(llm, tools, prompt)
+    agent = create_tool_calling_agent(llm, tools, prompt)
     
     return AgentExecutor(
         agent=agent, 
