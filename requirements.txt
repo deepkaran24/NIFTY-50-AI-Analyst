@@ -13,3 +13,4 @@ beautifulsoup4
 duckduckgo-search
 jinja2
 langchain-classic
+newsapi-python
